@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -133,8 +134,73 @@ func TestRetrieveNotFoundReturnsJobStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Retrieve should not raise on 404, got %v", err)
 	}
-	if js.Status != "not_found" {
-		t.Errorf("status = %q, want not_found", js.Status)
+	want := JobStatus{
+		Status: "not_found", JobID: "job_x", UserID: "unknown",
+		Message: "Verification not found",
+	}
+	if js == nil || *js != want {
+		t.Errorf("JobStatus = %+v, want %+v", js, want)
+	}
+}
+
+func TestUnexpectedResponseErrorStringExcludesRawBody(t *testing.T) {
+	const body = `<html>sensitive-user-identifier</html>`
+	var result JobStatus
+	err := decodeJSONObject(http.StatusNotFound, []byte(body), "req-not-found", &result)
+	var unexpected *UnexpectedResponseError
+	if !errors.As(err, &unexpected) {
+		t.Fatalf("err = %T %v, want *UnexpectedResponseError", err, err)
+	}
+	if unexpected.RawBody != body {
+		t.Fatalf("RawBody = %q, want %q", unexpected.RawBody, body)
+	}
+	if message := err.Error(); strings.Contains(message, "sensitive-user-identifier") {
+		t.Errorf("Error() exposes response body: %q", message)
+	}
+}
+
+func TestRetrieveMalformedNotFoundReturnsUnexpectedResponseError(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		body string
+	}{
+		{"null", "null"},
+		{"empty", ""},
+		{"html", "<html>not found</html>"},
+		{"malformed JSON", `{"status":`},
+		{"array", `[]`},
+		{"string", `"not_found"`},
+		{"incompatible field", `{"status":123}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v3/token" {
+					serveToken(w)
+					return
+				}
+				w.Header().Set("X-Request-Id", "req-not-found")
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, tt.body)
+			})
+
+			result, err := c.Verifications.Retrieve(context.Background(), "job_x")
+			var unexpected *UnexpectedResponseError
+			if !errors.As(err, &unexpected) {
+				t.Fatalf("err = %T %v, want *UnexpectedResponseError", err, err)
+			}
+			if result != nil {
+				t.Errorf("result = %+v, want nil", result)
+			}
+			if unexpected.StatusCode != http.StatusNotFound {
+				t.Errorf("StatusCode = %d, want 404", unexpected.StatusCode)
+			}
+			if unexpected.RawBody != tt.body {
+				t.Errorf("RawBody = %q, want %q", unexpected.RawBody, tt.body)
+			}
+			if unexpected.RequestID != "req-not-found" {
+				t.Errorf("RequestID = %q, want req-not-found", unexpected.RequestID)
+			}
+		})
 	}
 }
 

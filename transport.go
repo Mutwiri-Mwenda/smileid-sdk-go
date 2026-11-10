@@ -184,7 +184,7 @@ func (t *transport) Do(ctx context.Context, req *operations.Request, out interfa
 
 		if resp.StatusCode == http.StatusNotFound && req.NotFoundReturnsBody {
 			if out != nil {
-				return json.Unmarshal(respBody, out)
+				return decodeJSONObject(resp.StatusCode, respBody, requestID(resp), out)
 			}
 			return nil
 		}
@@ -333,7 +333,8 @@ func connectionError(err error) error {
 	return &ConnectionError{smileIDError: &smileIDError{Message: err.Error()}, Err: err}
 }
 
-// decodeJSONObject decodes a success (2xx) body into out. The body must be a
+// decodeJSONObject decodes a response body returned as a result into out,
+// including a verification status returned with HTTP 404. The body must be a
 // JSON object; anything else (HTML, an array, a bare string, null, an empty
 // body, or a shape mismatch) returns an *UnexpectedResponseError.
 func decodeJSONObject(status int, body []byte, requestID string, out interface{}) error {
