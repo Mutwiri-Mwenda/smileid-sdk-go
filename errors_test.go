@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -133,8 +134,28 @@ func TestRetrieveNotFoundReturnsJobStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Retrieve should not raise on 404, got %v", err)
 	}
-	if js.Status != "not_found" {
-		t.Errorf("status = %q, want not_found", js.Status)
+	want := JobStatus{
+		Status: "not_found", JobID: "job_x", UserID: "unknown",
+		Message: "Verification not found",
+	}
+	if js == nil || *js != want {
+		t.Errorf("JobStatus = %+v, want %+v", js, want)
+	}
+}
+
+func TestUnexpectedResponseErrorStringExcludesRawBody(t *testing.T) {
+	const body = `<html>sensitive-user-identifier</html>`
+	var result JobStatus
+	err := decodeJSONObject(http.StatusNotFound, []byte(body), "req-not-found", &result)
+	var unexpected *UnexpectedResponseError
+	if !errors.As(err, &unexpected) {
+		t.Fatalf("err = %T %v, want *UnexpectedResponseError", err, err)
+	}
+	if unexpected.RawBody != body {
+		t.Fatalf("RawBody = %q, want %q", unexpected.RawBody, body)
+	}
+	if message := err.Error(); strings.Contains(message, "sensitive-user-identifier") {
+		t.Errorf("Error() exposes response body: %q", message)
 	}
 }
 
