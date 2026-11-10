@@ -138,6 +138,51 @@ func TestRetrieveNotFoundReturnsJobStatus(t *testing.T) {
 	}
 }
 
+func TestRetrieveMalformedNotFoundReturnsUnexpectedResponseError(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		body string
+	}{
+		{"null", "null"},
+		{"empty", ""},
+		{"html", "<html>not found</html>"},
+		{"malformed JSON", `{"status":`},
+		{"array", `[]`},
+		{"string", `"not_found"`},
+		{"incompatible field", `{"status":123}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v3/token" {
+					serveToken(w)
+					return
+				}
+				w.Header().Set("X-Request-Id", "req-not-found")
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, tt.body)
+			})
+
+			result, err := c.Verifications.Retrieve(context.Background(), "job_x")
+			var unexpected *UnexpectedResponseError
+			if !errors.As(err, &unexpected) {
+				t.Fatalf("err = %T %v, want *UnexpectedResponseError", err, err)
+			}
+			if result != nil {
+				t.Errorf("result = %+v, want nil", result)
+			}
+			if unexpected.StatusCode != http.StatusNotFound {
+				t.Errorf("StatusCode = %d, want 404", unexpected.StatusCode)
+			}
+			if unexpected.RawBody != tt.body {
+				t.Errorf("RawBody = %q, want %q", unexpected.RawBody, tt.body)
+			}
+			if unexpected.RequestID != "req-not-found" {
+				t.Errorf("RequestID = %q, want req-not-found", unexpected.RequestID)
+			}
+		})
+	}
+}
+
 func TestErrorRequestIDFromHeader(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v3/token" {
